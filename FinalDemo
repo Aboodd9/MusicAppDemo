@@ -1,0 +1,122 @@
+
+
+import os
+import json
+import hashlib
+from cryptography.fernet import Fernet
+from datetime import datetime
+
+# Use current working directory
+BASE_DIR = "."
+LIBRARY_FILE = os.path.join(BASE_DIR, "music_library.json")
+KEY_FILE = os.path.join(BASE_DIR, "encryption.key")
+
+# Generate or load encryption key
+if not os.path.exists(KEY_FILE):
+    key = Fernet.generate_key()
+    with open(KEY_FILE, "wb") as f:
+        f.write(key)
+else:
+    with open(KEY_FILE, "rb") as f:
+        key = f.read()
+
+fernet = Fernet(key)
+
+
+# Load/save library
+def load_library():
+    if os.path.exists(LIBRARY_FILE) and os.path.getsize(LIBRARY_FILE) > 0:
+        with open(LIBRARY_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+
+def save_library(library):
+    with open(LIBRARY_FILE, "w") as f:
+        json.dump(library, f, indent=2)
+
+
+# Hashing + timestamps
+def get_checksum(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def timestamp():
+    return datetime.utcnow().isoformat()
+
+
+# CRUD functions
+def create_artifact(user, title, content):
+    lib = load_library()
+    enc = fernet.encrypt(content.encode())
+    filename = f"{user}_{title}.bin"
+    with open(filename, "wb") as f:
+        f.write(enc)
+    meta = {
+        "owner": user,
+        "file": filename,
+        "checksum": get_checksum(enc),
+        "created": timestamp(),
+        "modified": timestamp()
+    }
+    lib[title] = meta
+    save_library(lib)
+    return f"[+] Created '{title}'"
+
+
+def read_artifact(title):
+    lib = load_library()
+    if title not in lib: return "[-] Not found"
+    with open(lib[title]["file"], "rb") as f:
+        enc = f.read()
+    if get_checksum(enc) != lib[title]["checksum"]:
+        return "[!] Checksum mismatch"
+    return fernet.decrypt(enc).decode()
+
+
+def update_artifact(user, title, new_content):
+    lib = load_library()
+    if title not in lib or lib[title]["owner"] != user:
+        return "[-] Unauthorized"
+    enc = fernet.encrypt(new_content.encode())
+    with open(lib[title]["file"], "wb") as f:
+        f.write(enc)
+    lib[title]["checksum"] = get_checksum(enc)
+    lib[title]["modified"] = timestamp()
+    save_library(lib)
+    return f"[~] Updated '{title}'"
+
+
+def delete_artifact(user, title):
+    lib = load_library()
+    if title not in lib or lib[title]["owner"] != user:
+        return "[-] Unauthorized"
+    os.remove(lib[title]["file"])
+    del lib[title]
+    save_library(lib)
+    return f"[x] Deleted '{title}'"
+
+
+def list_library():
+    lib = load_library()
+    if not lib: return "[*] No artefacts found"
+    out = ["\n[*] Artefact Library"]
+    for t, d in lib.items():
+        out.append(f"{t} - {d['owner']} - {d['checksum']}")
+    return "\n".join(out)
+
+
+# === SIMULATED ACTIONS (run automatically) ===
+output = []
+output.append(
+    create_artifact("admin", "demo_song", "This is an original test song."))
+output.append(read_artifact("demo_song"))
+output.append(
+    update_artifact("admin", "demo_song", "Updated version of the lyrics."))
+output.append(read_artifact("demo_song"))
+output.append(list_library())
+output.append(delete_artifact("admin", "demo_song"))
+output.append(list_library())
+
+# Display all results
+print("\n".join(output))
